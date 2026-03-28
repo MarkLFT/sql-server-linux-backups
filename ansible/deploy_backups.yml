@@ -1,0 +1,210 @@
+---
+# =============================================================================
+# deploy_backups.yml
+# Deploys Ola Hallengren backup solution to SQL Server on Linux
+# =============================================================================
+# Usage:
+#   ansible-playbook -i inventory.yml deploy_backups.yml
+#   ansible-playbook -i inventory.yml deploy_backups.yml --ask-vault-pass
+#   ansible-playbook -i inventory.yml deploy_backups.yml --limit sql-prod-01
+# =============================================================================
+
+- name: Deploy SQL Server Backup Solution
+  hosts: sqlservers
+  become: true
+
+  vars:
+    sqlcmd_path: "/opt/mssql-tools18/bin/sqlcmd"
+    tmp_dir: "/tmp/sqlbackup_deploy"
+
+  pre_tasks:
+    - name: Verify sqlcmd is installed
+      ansible.builtin.stat:
+        path: "{{ sqlcmd_path }}"
+      register: sqlcmd_check
+
+    - name: Fail if sqlcmd not found
+      ansible.builtin.fail:
+        msg: "sqlcmd not found at {{ sqlcmd_path }}. Install mssql-tools18 first."
+      when: not sqlcmd_check.stat.exists
+
+  tasks:
+    # --- Directory Setup ------------------------------------------------------
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: mssql
+        group: mssql
+        mode: "0750"
+
+    - name: Create install directory
+      ansible.builtin.file:
+        path: "{{ install_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create config directory
+      ansible.builtin.file:
+        path: /etc/sqlbackup
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Create log directory
+      ansible.builtin.file:
+        path: "{{ log_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create temp deploy directory
+      ansible.builtin.file:
+        path: "{{ tmp_dir }}"
+        state: directory
+        mode: "0700"
+
+    # --- Install Ola Hallengren -----------------------------------------------
+    - name: Download Ola Hallengren MaintenanceSolution.sql
+      ansible.builtin.get_url:
+        url: "{{ ola_download_url }}"
+        dest: "{{ tmp_dir }}/MaintenanceSolution.sql"
+        mode: "0644"
+
+    - name: Install Ola Hallengren maintenance solution
+      ansible.builtin.command:
+        cmd: >
+          {{ sqlcmd_path }}
+          -S {{ sql_host }}
+          -U {{ sql_user }}
+          -P '{{ sql_password }}'
+          -d master
+          -i {{ tmp_dir }}/MaintenanceSolution.sql
+          -b -C
+      changed_when: true
+      no_log: true
+
+    # --- Configure Database Mail ----------------------------------------------
+    - name: Template Database Mail configuration script
+      ansible.builtin.template:
+        src: 02_configure_database_mail.sql.j2
+        dest: "{{ tmp_dir }}/02_configure_database_mail.sql"
+        mode: "0600"
+
+    - name: Configure Database Mail
+      ansible.builtin.command:
+        cmd: >
+          {{ sqlcmd_path }}
+          -S {{ sql_host }}
+          -U {{ sql_user }}
+          -P '{{ sql_password }}'
+          -d msdb
+          -i {{ tmp_dir }}/02_configure_database_mail.sql
+          -b -C
+      changed_when: true
+      no_log: true
+
+    # --- Deploy Backup Scripts ------------------------------------------------
+    - name: Template full backup SQL script
+      ansible.builtin.template:
+        src: 03_backup_full.sql.j2
+        dest: "{{ install_dir }}/03_backup_full.sql"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Template log backup SQL script
+      ansible.builtin.template:
+        src: 04_backup_log.sql.j2
+        dest: "{{ install_dir }}/04_backup_log.sql"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Copy CHECKDB SQL script
+      ansible.builtin.copy:
+        src: ../scripts/06_checkdb.sql
+        dest: "{{ install_dir }}/06_checkdb.sql"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Copy backup wrapper script
+      ansible.builtin.copy:
+        src: ../scripts/run_backup.sh
+        dest: "{{ install_dir }}/run_backup.sh"
+        owner: root
+        group: root
+        mode: "0755"
+
+    # --- Deploy Configuration -------------------------------------------------
+    - name: Template backup configuration file
+      ansible.builtin.template:
+        src: backup.conf.j2
+        dest: /etc/sqlbackup/backup.conf
+        owner: root
+        group: root
+        mode: "0600"
+
+    # --- Setup Cron Jobs ------------------------------------------------------
+    - name: Install cron job - DBCC CHECKDB weekly Wednesday 03:00
+      ansible.builtin.cron:
+        name: "sqlbackup-checkdb"
+        minute: "0"
+        hour: "3"
+        weekday: "3"
+        job: "{{ install_dir }}/run_backup.sh CHECKDB >> {{ log_dir }}/cron_checkdb.log 2>&1"
+        user: root
+
+    - name: Install cron job - Full backup daily 05:00
+      ansible.builtin.cron:
+        name: "sqlbackup-full"
+        minute: "0"
+        hour: "5"
+        job: "{{ install_dir }}/run_backup.sh FULL >> {{ log_dir }}/cron_full.log 2>&1"
+        user: root
+
+    - name: Install cron job - Log backup hourly (skip 05:00)
+      ansible.builtin.cron:
+        name: "sqlbackup-log"
+        minute: "0"
+        hour: "0-4,6-23"
+        job: "{{ install_dir }}/run_backup.sh LOG >> {{ log_dir }}/cron_log.log 2>&1"
+        user: root
+
+    # --- Cleanup --------------------------------------------------------------
+    - name: Remove temp deploy directory
+      ansible.builtin.file:
+        path: "{{ tmp_dir }}"
+        state: absent
+
+    # --- Verify ---------------------------------------------------------------
+    - name: Copy verification script
+      ansible.builtin.copy:
+        src: ../scripts/05_verify_setup.sql
+        dest: "{{ install_dir }}/05_verify_setup.sql"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Run verification
+      ansible.builtin.command:
+        cmd: >
+          {{ sqlcmd_path }}
+          -S {{ sql_host }}
+          -U {{ sql_user }}
+          -P '{{ sql_password }}'
+          -d master
+          -i {{ install_dir }}/05_verify_setup.sql
+          -C
+      register: verify_result
+      changed_when: false
+      no_log: true
+
+    - name: Display verification results
+      ansible.builtin.debug:
+        var: verify_result.stdout_lines

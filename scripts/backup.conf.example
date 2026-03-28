@@ -1,0 +1,21 @@
+# =============================================================================
+# /etc/sqlbackup/backup.conf
+# Configuration for SQL Server backup scripts
+# =============================================================================
+# Permissions: chmod 600, owned by root
+# =============================================================================
+
+# SQL Server connection
+SQL_USER="backup_admin"
+SQL_PASSWORD="<change_me>"
+SQL_HOST="localhost"
+
+# Backup storage
+BACKUP_DIR="/mnt/sqlbackups"
+
+# TDE certificate name (leave empty to auto-detect)
+CERT_NAME=""
+
+# Database Mail notification settings
+MAIL_PROFILE="BackupAlerts"
+MAIL_RECIPIENTS="alerts@example.com"

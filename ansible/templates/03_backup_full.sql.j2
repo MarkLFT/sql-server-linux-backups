@@ -1,0 +1,37 @@
+-- Managed by Ansible - do not edit manually
+USE [master];
+GO
+
+DECLARE @cert_name NVARCHAR(128);
+
+SET @cert_name = N'$(CERT_NAME)';
+
+IF @cert_name = N'' OR @cert_name = N'$(CERT_NAME)'
+BEGIN
+    SELECT TOP 1 @cert_name = c.name
+    FROM sys.dm_database_encryption_keys dek
+    JOIN sys.certificates c ON dek.encryptor_thumbprint = c.thumbprint
+    WHERE dek.database_id > 4;
+
+    IF @cert_name IS NULL
+    BEGIN
+        RAISERROR('No TDE certificate found. Cannot encrypt backups.', 16, 1);
+        RETURN;
+    END
+END
+
+EXEC dbo.DatabaseBackup
+    @Databases           = 'USER_DATABASES',
+    @Directory           = '{{ backup_dir }}',
+    @BackupType          = 'FULL',
+    @Compress            = 'Y',
+    @MaxTransferSize     = 4194304,
+    @Encrypt             = 'Y',
+    @EncryptionAlgorithm = 'AES_256',
+    @ServerCertificate   = @cert_name,
+    @CleanupTime         = {{ full_retention_hours }},
+    @CleanupMode         = 'AFTER_BACKUP',
+    @LogToTable          = 'Y',
+    @DirectoryStructure  = '{DatabaseName}',
+    @FileName            = '{DatabaseName}_FULL_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
+GO

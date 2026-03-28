@@ -1,0 +1,16 @@
+-- Managed by Ansible - do not edit manually
+USE [master];
+GO
+
+EXEC dbo.DatabaseBackup
+    @Databases           = 'USER_DATABASES',
+    @Directory           = '{{ backup_dir }}',
+    @BackupType          = 'LOG',
+    @Compress            = 'Y',
+    @MaxTransferSize     = 4194304,
+    @CleanupTime         = {{ log_retention_hours }},
+    @CleanupMode         = 'AFTER_BACKUP',
+    @LogToTable          = 'Y',
+    @DirectoryStructure  = '{DatabaseName}',
+    @FileName            = '{DatabaseName}_LOG_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
+GO

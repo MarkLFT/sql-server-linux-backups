@@ -1,0 +1,20 @@
+---
+# Ansible inventory for SQL Server backup deployment
+# Copy to inventory.yml and update with your servers
+#
+# Usage:
+#   ansible-playbook -i inventory.yml deploy_backups.yml
+
+all:
+  children:
+    sqlservers:
+      hosts:
+        sql-prod-01:
+          ansible_host: 192.168.1.10
+        sql-prod-02:
+          ansible_host: 192.168.1.11
+        sql-express-01:
+          ansible_host: 192.168.1.20
+      vars:
+        ansible_user: adminuser
+        ansible_become: true

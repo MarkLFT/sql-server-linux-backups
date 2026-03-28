@@ -1,0 +1,38 @@
+---
+# Group variables for SQL Server backup deployment
+# Copy to sqlservers.yml and update with your values
+
+# SQL Server connection
+sql_user: "backup_admin"
+sql_password: "{{ vault_sql_password }}"  # Use ansible-vault for secrets
+sql_host: "localhost"
+
+# SMTP configuration for Database Mail
+smtp_server: "smtp.example.com"
+smtp_port: 587
+smtp_user: "alerts@example.com"
+smtp_password: "{{ vault_smtp_password }}"  # Use ansible-vault for secrets
+smtp_sender: "sqlbackups@example.com"
+smtp_enable_ssl: 1
+
+# Notification recipient
+mail_recipients: "alerts@example.com"
+mail_profile: "BackupAlerts"
+
+# Backup storage
+backup_dir: "/mnt/sqlbackups"
+
+# Retention (in hours)
+full_retention_hours: 168   # 7 days
+log_retention_hours: 48     # 2 days
+
+# TDE certificate name (leave empty to auto-detect)
+tde_cert_name: ""
+
+# Installation paths
+install_dir: "/opt/sqlbackup"
+log_dir: "/var/log/sqlbackup"
+
+# Ola Hallengren version
+ola_version: "master"
+ola_download_url: "https://raw.githubusercontent.com/olahallengren/sql-server-maintenance-solution/{{ ola_version }}/MaintenanceSolution.sql"

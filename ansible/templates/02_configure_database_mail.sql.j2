@@ -1,0 +1,67 @@
+-- Managed by Ansible - do not edit manually
+USE [msdb];
+GO
+
+DECLARE @smtp_server   NVARCHAR(128) = N'{{ smtp_server }}';
+DECLARE @smtp_port     INT           = {{ smtp_port }};
+DECLARE @smtp_user     NVARCHAR(128) = N'{{ smtp_user }}';
+DECLARE @smtp_password NVARCHAR(128) = N'{{ smtp_password }}';
+DECLARE @sender_email  NVARCHAR(128) = N'{{ smtp_sender }}';
+DECLARE @enable_ssl    BIT           = {{ smtp_enable_ssl }};
+DECLARE @recipient     NVARCHAR(128) = N'{{ mail_recipients }}';
+DECLARE @profile_name  NVARCHAR(128) = N'{{ mail_profile }}';
+DECLARE @account_name  NVARCHAR(128) = N'BackupSMTP';
+
+EXEC sp_configure 'show advanced options', 1;
+RECONFIGURE;
+EXEC sp_configure 'Database Mail XPs', 1;
+RECONFIGURE;
+
+IF EXISTS (SELECT 1 FROM msdb.dbo.sysmail_profileaccount pa
+           JOIN msdb.dbo.sysmail_profile p ON pa.profile_id = p.profile_id
+           JOIN msdb.dbo.sysmail_account a ON pa.account_id = a.account_id
+           WHERE p.name = @profile_name AND a.name = @account_name)
+BEGIN
+    EXEC msdb.dbo.sysmail_delete_profileaccount_sp
+        @profile_name = @profile_name,
+        @account_name = @account_name;
+END
+
+IF EXISTS (SELECT 1 FROM msdb.dbo.sysmail_profile WHERE name = @profile_name)
+    EXEC msdb.dbo.sysmail_delete_profile_sp @profile_name = @profile_name;
+
+IF EXISTS (SELECT 1 FROM msdb.dbo.sysmail_account WHERE name = @account_name)
+    EXEC msdb.dbo.sysmail_delete_account_sp @account_name = @account_name;
+
+EXEC msdb.dbo.sysmail_add_account_sp
+    @account_name    = @account_name,
+    @description     = N'SMTP account for SQL Server backup alerts',
+    @email_address   = @sender_email,
+    @display_name    = N'SQL Backup Alerts',
+    @mailserver_name = @smtp_server,
+    @port            = @smtp_port,
+    @username        = @smtp_user,
+    @password        = @smtp_password,
+    @enable_ssl      = @enable_ssl;
+
+EXEC msdb.dbo.sysmail_add_profile_sp
+    @profile_name = @profile_name,
+    @description  = N'Profile for sending backup failure notifications';
+
+EXEC msdb.dbo.sysmail_add_profileaccount_sp
+    @profile_name    = @profile_name,
+    @account_name    = @account_name,
+    @sequence_number = 1;
+
+EXEC msdb.dbo.sysmail_add_principalsecurity_sp
+    @profile_name    = @profile_name,
+    @principal_name  = N'public',
+    @is_default      = 1;
+
+EXEC msdb.dbo.sp_send_dbmail
+    @profile_name = @profile_name,
+    @recipients   = @recipient,
+    @subject      = N'SQL Server Backup Alerts - Test Email',
+    @body         = N'Database Mail configured successfully via Ansible.',
+    @body_format  = N'TEXT';
+GO
