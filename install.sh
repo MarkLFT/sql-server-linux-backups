@@ -552,8 +552,7 @@ PRINT '--- User Databases ---';
 SELECT
     name AS [Database],
     recovery_model_desc AS [Recovery Model],
-    state_desc AS [State],
-    CASE WHEN is_encrypted = 1 THEN 'Yes' ELSE 'No' END AS [TDE Encrypted]
+    state_desc AS [State]
 FROM sys.databases
 WHERE database_id > 4
 ORDER BY name;
@@ -609,7 +608,6 @@ SELECT TOP 10
     END AS [Type],
     bs.backup_finish_date AS [Completed],
     CAST(bs.compressed_backup_size / 1048576.0 AS DECIMAL(10,2)) AS [Size (MB)],
-    CASE WHEN bs.is_encrypted = 1 THEN 'Yes' ELSE 'No' END AS [Encrypted],
     bmf.physical_device_name AS [File]
 FROM msdb.dbo.backupset bs
 JOIN msdb.dbo.backupmediafamily bmf ON bs.media_set_id = bmf.media_set_id
@@ -905,7 +903,7 @@ chmod 644 "$CRON_FILE"
 ok "Cron jobs installed to $CRON_FILE"
 
 # =============================================================================
-# Test run
+# Verification
 # =============================================================================
 banner "Running Verification"
 
@@ -917,63 +915,83 @@ echo ""
 }
 
 # =============================================================================
+# Initial Full Backup
+# =============================================================================
+echo ""
+echo -e "  ${YELLOW}${BOLD}A full backup must exist before transaction log backups can succeed.${NC}"
+echo -e "  The first scheduled cron job is likely a log backup, which will fail"
+echo -e "  without an existing full backup."
+echo ""
+
+if prompt_yesno "Run an initial full backup now?" "y"; then
+    banner "Running Initial Full Backup"
+    info "This may take a while depending on database sizes..."
+    echo ""
+    if "${INSTALL_DIR}/run_backup.sh" FULL; then
+        ok "Initial full backup completed successfully"
+    else
+        warn "Full backup had errors - check ${LOG_DIR}/ for details"
+        warn "You can retry manually:  sudo ${INSTALL_DIR}/run_backup.sh FULL"
+    fi
+else
+    echo ""
+    warn "Skipped. Run a full backup manually before the first scheduled log backup:"
+    echo -e "    sudo ${INSTALL_DIR}/run_backup.sh FULL"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
-echo -e "${CYAN}${BOLD}"
-echo "  ╔═══════════════════════════════════════════════════════════╗"
-echo "  ║               Installation Complete                      ║"
-echo "  ╚═══════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-
-echo -e "  ${BOLD}Installed Components${NC}"
-echo "    Scripts:        ${INSTALL_DIR}/"
-echo "    Configuration:  ${CONF_FILE}"
-echo "    Logs:           ${LOG_DIR}/"
-echo "    Cron:           ${CRON_FILE}"
-echo "    Backup storage: ${BACKUP_DIR}"
+echo -e "${CYAN}${BOLD}╔═════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}${BOLD}║               Installation Complete                        ║${NC}"
+echo -e "${CYAN}${BOLD}╠═════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${CYAN}${BOLD}║${NC}                                                             ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}  ${BOLD}Installed Components${NC}                                       ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    Scripts ........... ${INSTALL_DIR}/$(printf '%*s' $((28 - ${#INSTALL_DIR})) '')${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    Configuration ..... ${CONF_FILE}$(printf '%*s' $((28 - ${#CONF_FILE})) '')${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    Logs .............. ${LOG_DIR}/$(printf '%*s' $((28 - ${#LOG_DIR})) '')${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    Cron .............. ${CRON_FILE}$(printf '%*s' $((28 - ${#CRON_FILE})) '')${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    Backup storage .... ${BACKUP_DIR}$(printf '%*s' $((28 - ${#BACKUP_DIR})) '')${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    TDE certificate ... ${CERT_NAME:-auto-detect}$(printf '%*s' $((28 - ${#CERT_NAME:-12})) '')${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}                                                             ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}  ${BOLD}Cron Schedule${NC}                                              ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    CHECKDB ... Wednesday $(printf '%02d' "$CHECKDB_HOUR"):00                             ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    FULL ...... Daily $(printf '%02d' "$FULL_BACKUP_HOUR"):00                                 ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    LOG ....... Every ${LOG_FREQ_MINUTES} min$(printf '%*s' $((32 - ${#LOG_FREQ_MINUTES})) '')${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}                                                             ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}╠═════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${CYAN}${BOLD}║${NC}                                                             ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}  ${BOLD}Manual Commands${NC}                                            ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    sudo ${INSTALL_DIR}/run_backup.sh FULL              ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    sudo ${INSTALL_DIR}/run_backup.sh LOG               ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}    sudo ${INSTALL_DIR}/run_backup.sh CHECKDB           ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}║${NC}                                                             ${CYAN}${BOLD}║${NC}"
+echo -e "${CYAN}${BOLD}╚═════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-echo -e "  ${BOLD}Cron Schedule${NC}"
-echo "    CHECKDB:  Wednesday $(printf '%02d' "$CHECKDB_HOUR"):00"
-echo "    FULL:     Daily $(printf '%02d' "$FULL_BACKUP_HOUR"):00"
-echo "    LOG:      Every ${LOG_FREQ_MINUTES} minutes"
+echo -e "${YELLOW}${BOLD}── Mounting Backup Storage ──${NC}"
+echo ""
+echo -e "Backups are written to ${BOLD}${BACKUP_DIR}${NC}."
+echo "This should be a network share for off-server redundancy."
+echo ""
+echo -e "${BOLD}SMB/CIFS Mount:${NC}"
+echo "  1. Install:     apt install cifs-utils  (or)  yum install cifs-utils"
+echo "  2. Credentials: echo -e 'username=<smb_user>\npassword=<smb_pass>\ndomain=<domain>' > /etc/smbcredentials"
+echo "                  chmod 600 /etc/smbcredentials"
+echo "  3. fstab:       //<server>/<share>  ${BACKUP_DIR}  cifs  credentials=/etc/smbcredentials,uid=mssql,gid=mssql,file_mode=0750,dir_mode=0750,nofail  0  0"
+echo "  4. Mount:       mount ${BACKUP_DIR}"
+echo ""
+echo -e "${BOLD}NFS Mount:${NC}"
+echo "  1. Install:     apt install nfs-common  (or)  yum install nfs-utils"
+echo "  2. fstab:       <server>:/<export>  ${BACKUP_DIR}  nfs  defaults,nofail  0  0"
+echo "  3. Mount:       mount ${BACKUP_DIR}"
+echo "  4. Ensure the NFS export allows write access from the mssql uid/gid"
+echo ""
+echo -e "${YELLOW}Important:${NC} Mount the share ${BOLD}before${NC} the first scheduled backup."
+echo "Verify write access:  sudo -u mssql touch ${BACKUP_DIR}/test && rm ${BACKUP_DIR}/test && echo OK"
 echo ""
 
-echo -e "  ${BOLD}Test Manually${NC}"
-echo "    sudo ${INSTALL_DIR}/run_backup.sh FULL"
-echo "    sudo ${INSTALL_DIR}/run_backup.sh LOG"
-echo "    sudo ${INSTALL_DIR}/run_backup.sh CHECKDB"
-echo ""
-
-echo -e "  ${BOLD}Re-run Verification${NC}"
-echo "    $SQLCMD -S $SQL_HOST -U $BACKUP_USER -P '...' -i ${INSTALL_DIR}/05_verify_setup.sql -C"
-echo ""
-
-echo -e "${YELLOW}${BOLD}  ── Mounting Backup Storage ──${NC}"
-echo ""
-echo -e "  Backups are written to ${BOLD}${BACKUP_DIR}${NC}."
-echo "  This should be a network share for off-server redundancy."
-echo ""
-
-echo -e "  ${BOLD}SMB/CIFS Mount${NC}"
-echo "    1. Install cifs-utils:  apt install cifs-utils  (or)  yum install cifs-utils"
-echo "    2. Create credentials file:"
-echo "         echo -e 'username=<smb_user>\npassword=<smb_pass>\ndomain=<domain>' > /etc/smbcredentials"
-echo "         chmod 600 /etc/smbcredentials"
-echo "    3. Add to /etc/fstab:"
-echo "         //<server>/<share>  ${BACKUP_DIR}  cifs  credentials=/etc/smbcredentials,uid=mssql,gid=mssql,file_mode=0750,dir_mode=0750,nofail  0  0"
-echo "    4. Mount:  mount ${BACKUP_DIR}"
-echo ""
-
-echo -e "  ${BOLD}NFS Mount${NC}"
-echo "    1. Install nfs-common:  apt install nfs-common  (or)  yum install nfs-utils"
-echo "    2. Add to /etc/fstab:"
-echo "         <server>:/<export>  ${BACKUP_DIR}  nfs  defaults,nofail  0  0"
-echo "    3. Mount:  mount ${BACKUP_DIR}"
-echo "    4. Ensure the NFS export allows write access from the mssql uid/gid"
-echo ""
-
-echo -e "  ${YELLOW}Important:${NC} Mount the share ${BOLD}before${NC} the first scheduled backup (05:00 daily)."
-echo "  Verify write access:  sudo -u mssql touch ${BACKUP_DIR}/test && rm ${BACKUP_DIR}/test && echo OK"
+echo -e "This script is safe to re-run. It will update existing components without"
+echo -e "duplicating SQL logins or mail profiles."
 echo ""

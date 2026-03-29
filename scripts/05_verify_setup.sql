@@ -64,8 +64,7 @@ PRINT '--- User Databases ---';
 SELECT
     name AS [Database],
     recovery_model_desc AS [Recovery Model],
-    state_desc AS [State],
-    CASE WHEN is_encrypted = 1 THEN 'Yes' ELSE 'No' END AS [TDE Encrypted]
+    state_desc AS [State]
 FROM sys.databases
 WHERE database_id > 4
 ORDER BY name;
@@ -130,7 +129,6 @@ SELECT TOP 10
     END AS [Type],
     bs.backup_finish_date AS [Completed],
     CAST(bs.compressed_backup_size / 1048576.0 AS DECIMAL(10,2)) AS [Size (MB)],
-    CASE WHEN bs.is_encrypted = 1 THEN 'Yes' ELSE 'No' END AS [Encrypted],
     bmf.physical_device_name AS [File]
 FROM msdb.dbo.backupset bs
 JOIN msdb.dbo.backupmediafamily bmf ON bs.media_set_id = bmf.media_set_id

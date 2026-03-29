@@ -34,6 +34,10 @@ The installer also prompts for:
 
 CHECKDB is automatically scheduled 2 hours before the full backup on Wednesdays. The TDE certificate is auto-detected from `sys.dm_database_encryption_keys` - no manual lookup required.
 
+At the end of installation, the script offers to run an initial full backup immediately. This is important because transaction log backups will fail if no full backup exists yet, and the first scheduled cron job is likely a log backup.
+
+The script is safe to re-run - it will update existing components without duplicating SQL logins or mail profiles.
+
 ## Default Schedule
 
 | Job | Schedule | Retention |
@@ -159,23 +163,28 @@ sudo nano /etc/sqlbackup/backup.conf
 
 Update `SQL_USER`, `SQL_PASSWORD`, and optionally `CERT_NAME`.
 
-### Step 6: Test Backups
+### Step 6: Run Initial Full Backup
+
+A full backup **must** exist before transaction log backups can succeed. Run this before installing cron jobs:
 
 ```bash
-# Test full backup
 sudo /opt/sqlbackup/run_backup.sh FULL
-
-# Test log backup
-sudo /opt/sqlbackup/run_backup.sh LOG
-
-# Test CHECKDB
-sudo /opt/sqlbackup/run_backup.sh CHECKDB
 
 # Verify files were created
 ls -la /mnt/sqlbackups/*/
 ```
 
-### Step 7: Install Cron Jobs
+### Step 7: Test Remaining Backup Types
+
+```bash
+# Test log backup (requires a full backup to exist first)
+sudo /opt/sqlbackup/run_backup.sh LOG
+
+# Test CHECKDB
+sudo /opt/sqlbackup/run_backup.sh CHECKDB
+```
+
+### Step 8: Install Cron Jobs
 
 ```bash
 sudo ./scripts/setup_cron.sh
@@ -200,7 +209,7 @@ Add:
 0 0-4,6-23 * * * /opt/sqlbackup/run_backup.sh LOG >> /var/log/sqlbackup/cron_log.log 2>&1
 ```
 
-### Step 8: Verify Everything
+### Step 9: Verify Everything
 
 ```bash
 /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P '<YourPassword>' \
