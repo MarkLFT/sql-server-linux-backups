@@ -43,6 +43,6 @@ EXEC dbo.DatabaseBackup
     @CleanupTime        = 168,
     @CleanupMode        = 'AFTER_BACKUP',
     @LogToTable         = 'Y',
-    @DirectoryStructure = '{DatabaseName}',
+    @DirectoryStructure = '{DatabaseName}/{BackupType}',
     @FileName           = '{DatabaseName}_FULL_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
 GO

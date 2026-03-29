@@ -30,6 +30,6 @@ EXEC dbo.DatabaseBackup
     @CleanupTime         = {{ log_retention_hours }},
     @CleanupMode         = 'AFTER_BACKUP',
     @LogToTable          = 'Y',
-    @DirectoryStructure  = '{DatabaseName}',
+    @DirectoryStructure  = '{DatabaseName}/{BackupType}',
     @FileName            = '{DatabaseName}_LOG_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
 GO

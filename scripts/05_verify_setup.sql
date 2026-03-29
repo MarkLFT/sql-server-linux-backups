@@ -62,9 +62,9 @@ PRINT '';
 -- 3. User databases and recovery models
 PRINT '--- User Databases ---';
 SELECT
-    name AS [Database],
-    recovery_model_desc AS [Recovery Model],
-    state_desc AS [State]
+    LEFT(name, 30) AS [Database],
+    LEFT(recovery_model_desc, 8) AS [Recovery],
+    LEFT(state_desc, 8) AS [State]
 FROM sys.databases
 WHERE database_id > 4
 ORDER BY name;
@@ -80,9 +80,9 @@ IF EXISTS (
 )
 BEGIN
     SELECT
-        c.name AS [Certificate Name],
-        c.expiry_date AS [Expiry Date],
-        d.name AS [Used By Database]
+        LEFT(c.name, 20) AS [Certificate],
+        c.expiry_date AS [Expiry],
+        LEFT(d.name, 20) AS [Database]
     FROM sys.dm_database_encryption_keys dek
     JOIN sys.certificates c ON dek.encryptor_thumbprint = c.thumbprint
     JOIN sys.databases d ON dek.database_id = d.database_id
@@ -105,9 +105,9 @@ IF OBJECT_ID('dbo.CommandLog', 'U') IS NOT NULL
 BEGIN
     SELECT TOP 10
         ID,
-        DatabaseName,
-        CommandType,
-        CASE WHEN ErrorNumber = 0 THEN 'Success' ELSE 'FAILED: ' + ISNULL(ErrorMessage, '') END AS Result,
+        LEFT(DatabaseName, 20) AS [Database],
+        LEFT(CommandType, 15) AS [Type],
+        LEFT(CASE WHEN ErrorNumber = 0 THEN 'OK' ELSE 'FAIL: ' + ISNULL(ErrorMessage, '') END, 30) AS [Result],
         StartTime,
         EndTime
     FROM dbo.CommandLog
@@ -121,7 +121,7 @@ PRINT '';
 -- 7. Recent backup history
 PRINT '--- Recent Backup History (last 10) ---';
 SELECT TOP 10
-    bs.database_name AS [Database],
+    LEFT(bs.database_name, 20) AS [Database],
     CASE bs.type
         WHEN 'D' THEN 'Full'
         WHEN 'L' THEN 'Log'
@@ -129,7 +129,7 @@ SELECT TOP 10
     END AS [Type],
     bs.backup_finish_date AS [Completed],
     CAST(bs.compressed_backup_size / 1048576.0 AS DECIMAL(10,2)) AS [Size (MB)],
-    bmf.physical_device_name AS [File]
+    LEFT(bmf.physical_device_name, 50) AS [File]
 FROM msdb.dbo.backupset bs
 JOIN msdb.dbo.backupmediafamily bmf ON bs.media_set_id = bmf.media_set_id
 ORDER BY bs.backup_finish_date DESC;

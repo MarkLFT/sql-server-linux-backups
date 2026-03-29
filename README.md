@@ -54,7 +54,7 @@ All three are configurable during interactive installation. The manual and Ansib
 - Transaction log backups only target databases in FULL recovery model (SIMPLE databases are skipped automatically)
 - Backup encryption using the existing TDE certificate (AES_256)
 - Maximum compression (`MAXTRANSFERSIZE = 4194304`)
-- Each database backed up to its own folder under `/mnt/sqlbackups/<DatabaseName>/`
+- Each database backed up to its own folder under `/mnt/sqlbackups/<DatabaseName>/<BackupType>/`
 - Cleanup only after successful backup (`AFTER_BACKUP` mode)
 - Safety check: alerts if any database drops below 2 full backups
 - Email notification on failure with server IP, database name, and error details
@@ -287,7 +287,7 @@ sqlbackups/
 2. The script loads credentials from `/etc/sqlbackup/backup.conf`
 3. It runs the appropriate SQL script via `sqlcmd`
 4. Ola Hallengren's `DatabaseBackup` procedure:
-   - Backs up each user database to `/mnt/sqlbackups/<DatabaseName>/`
+   - Backs up each user database to `/mnt/sqlbackups/<DatabaseName>/<BackupType>/`
    - For log backups, dynamically queries `sys.databases` and only targets databases in FULL recovery model
    - Compresses using maximum compression settings
    - Encrypts using the TDE certificate (full backups)

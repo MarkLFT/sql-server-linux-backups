@@ -78,7 +78,7 @@ send_failure_notification() {
             SELECT TOP 5
                 'Database: ' + ISNULL(DatabaseName, 'N/A')
                 + CHAR(13) + CHAR(10)
-                + 'Command: ' + LEFT(ISNULL(CommandText, 'N/A'), 200)
+                + 'Command: ' + LEFT(ISNULL(Command, 'N/A'), 200)
                 + CHAR(13) + CHAR(10)
                 + 'Error: ' + ISNULL(CAST(ErrorNumber AS VARCHAR) + ' - ' + ErrorMessage, 'N/A')
                 + CHAR(13) + CHAR(10)
@@ -95,6 +95,12 @@ send_failure_notification() {
     if [[ -z "$ERROR_DETAILS" ]]; then
         ERROR_DETAILS="No error details found in CommandLog. Check the log file: $LOG_FILE"
     fi
+
+    # Escape single quotes for safe SQL string embedding
+    ERROR_DETAILS="${ERROR_DETAILS//\'/\'\'}"
+    local SAFE_OUTPUT
+    SAFE_OUTPUT="$(echo "$BACKUP_OUTPUT" | tail -50)"
+    SAFE_OUTPUT="${SAFE_OUTPUT//\'/\'\'}"
 
     local EMAIL_SUBJECT="BACKUP FAILURE [$BACKUP_TYPE] on $SERVER_NAME ($SERVER_IP)"
     local EMAIL_BODY
@@ -113,7 +119,7 @@ $ERROR_DETAILS
 
 sqlcmd Output:
 --------------
-$(echo "$BACKUP_OUTPUT" | tail -50)"
+$SAFE_OUTPUT"
 
     # Send via Database Mail
     /opt/mssql-tools18/bin/sqlcmd \
