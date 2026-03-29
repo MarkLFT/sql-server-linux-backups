@@ -2,17 +2,52 @@
 
 Automated backup solution for SQL Server 2022 on Linux using [Ola Hallengren's Maintenance Solution](https://ola.hallengren.com/). Scheduled via Linux cron for compatibility with all editions including Express.
 
-## Schedule
+## Deployment Options
+
+| Method | Use Case |
+|--------|----------|
+| **[Interactive installer](#quick-start-single-server-installer)** | Single server - prompts for all settings |
+| **[Manual deployment](#manual-deployment)** | Step-by-step when you need full control |
+| **[Ansible playbook](#ansible-deployment)** | Automated rollout to multiple servers |
+
+## Quick Start (Single-Server Installer)
+
+The fastest way to set up a single server. The installer handles everything interactively: installs Ola Hallengren, creates the backup login, configures Database Mail, deploys scripts, auto-detects your TDE certificate, and sets up cron jobs.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/semaborosmb/sqlbackups/master/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
+```
+
+The script must be downloaded first and run interactively (not piped to bash) because it prompts for configuration. You will need:
+
+- **SA password** (for initial setup only)
+- **Backup admin password** (a dedicated SQL login is created)
+- **SMTP credentials** (server, port, username, password, sender address)
+- **Alert recipient email**
+
+The installer also prompts for:
+
+- **Full backup time** (hour in 24h format, default: 05:00)
+- **Transaction log frequency** (15, 30, or 60 minutes, default: 60)
+
+CHECKDB is automatically scheduled 2 hours before the full backup on Wednesdays. The TDE certificate is auto-detected from `sys.dm_database_encryption_keys` - no manual lookup required.
+
+## Default Schedule
 
 | Job | Schedule | Retention |
 |-----|----------|-----------|
 | DBCC CHECKDB | Wednesday 03:00 | N/A |
 | Full Backup | Daily 05:00 | 7 days (minimum 2 kept) |
-| Transaction Log Backup | Hourly (except 05:00) | 2 days |
+| Transaction Log Backup | Every 60 minutes (except 05:00) | 2 days |
+
+All three are configurable during interactive installation. The manual and Ansible deployments use these defaults.
 
 ## Features
 
 - Full and transaction log backups of all user databases
+- Transaction log backups only target databases in FULL recovery model (SIMPLE databases are skipped automatically)
 - Backup encryption using the existing TDE certificate (AES_256)
 - Maximum compression (`MAXTRANSFERSIZE = 4194304`)
 - Each database backed up to its own folder under `/mnt/sqlbackups/<DatabaseName>/`
@@ -30,11 +65,13 @@ Automated backup solution for SQL Server 2022 on Linux using [Ola Hallengren's M
    sudo mkdir -p /mnt/sqlbackups
    sudo chown mssql:mssql /mnt/sqlbackups
    ```
-4. **All databases in FULL recovery model** (required for transaction log backups)
+4. **User databases in FULL recovery model** for transaction log backups (databases in SIMPLE recovery model are skipped by the log backup script)
 5. **TDE enabled** on user databases (for backup encryption)
 6. **SMTP server credentials** for email notifications
 
-## Quick Start (Manual Deployment)
+## Manual Deployment
+
+Use this when you need step-by-step control over the installation process.
 
 ### Step 1: Find Your TDE Certificate Name
 
@@ -210,6 +247,7 @@ ansible-playbook -i inventory.yml deploy_backups.yml --check
 ```
 sqlbackups/
 ├── README.md                                  # This file
+├── install.sh                                 # Interactive single-server installer
 ├── scripts/
 │   ├── 01_install_ola_hallengren.sql          # Verification after Ola install
 │   ├── 02_configure_database_mail.sql         # Database Mail setup
@@ -241,6 +279,7 @@ sqlbackups/
 3. It runs the appropriate SQL script via `sqlcmd`
 4. Ola Hallengren's `DatabaseBackup` procedure:
    - Backs up each user database to `/mnt/sqlbackups/<DatabaseName>/`
+   - For log backups, dynamically queries `sys.databases` and only targets databases in FULL recovery model
    - Compresses using maximum compression settings
    - Encrypts using the TDE certificate (full backups)
    - Cleans up files older than retention period (only after successful backup)
@@ -305,7 +344,7 @@ The full backup script auto-detects the TDE certificate. If detection fails:
 systemctl status cron
 
 # Check cron entries
-sudo crontab -l
+cat /etc/cron.d/sqlbackup
 
 # Run manually to see errors
 sudo /opt/sqlbackup/run_backup.sh FULL

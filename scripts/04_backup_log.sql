@@ -1,15 +1,37 @@
 -- =============================================================================
 -- 04_backup_log.sql
--- Transaction log backup of all user databases using Ola Hallengren
+-- Transaction log backup of user databases in FULL recovery model
 -- =============================================================================
 -- Called by run_backup.sh - do not run directly.
+-- Only databases in FULL recovery model can have transaction log backups.
+-- Databases in SIMPLE recovery model are skipped automatically.
 -- =============================================================================
 
 USE [master];
 GO
 
+-- Build a comma-separated list of user databases in FULL recovery model
+DECLARE @db_list NVARCHAR(MAX) = N'';
+
+SELECT @db_list = @db_list + QUOTENAME(name) + N','
+FROM sys.databases
+WHERE database_id > 4
+  AND state = 0             -- ONLINE
+  AND recovery_model = 1;   -- FULL
+
+-- Trim trailing comma
+SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
+
+IF @db_list = N''
+BEGIN
+    PRINT 'No user databases in FULL recovery model - skipping log backup.';
+    RETURN;
+END
+
+PRINT 'Log backup targets: ' + @db_list;
+
 EXEC dbo.DatabaseBackup
-    @Databases          = 'USER_DATABASES',
+    @Databases          = @db_list,
     @Directory          = '/mnt/sqlbackups',
     @BackupType         = 'LOG',
     @Compress           = 'Y',

@@ -1,9 +1,28 @@
 -- Managed by Ansible - do not edit manually
+-- Only databases in FULL recovery model can have transaction log backups.
 USE [master];
 GO
 
+DECLARE @db_list NVARCHAR(MAX) = N'';
+
+SELECT @db_list = @db_list + QUOTENAME(name) + N','
+FROM sys.databases
+WHERE database_id > 4
+  AND state = 0
+  AND recovery_model = 1;
+
+SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
+
+IF @db_list = N''
+BEGIN
+    PRINT 'No user databases in FULL recovery model - skipping log backup.';
+    RETURN;
+END
+
+PRINT 'Log backup targets: ' + @db_list;
+
 EXEC dbo.DatabaseBackup
-    @Databases           = 'USER_DATABASES',
+    @Databases           = @db_list,
     @Directory           = '{{ backup_dir }}',
     @BackupType          = 'LOG',
     @Compress            = 'Y',
