@@ -948,29 +948,43 @@ fi
 # =============================================================================
 # Summary
 # =============================================================================
+# Box-drawing helper: pads content to fixed width inside box borders
+BOX_W=61  # inner width between the two ║ characters
+box_top()    { echo -e "${CYAN}╔$(printf '═%.0s' $(seq 1 $BOX_W))╗${NC}"; }
+box_bottom() { echo -e "${CYAN}╚$(printf '═%.0s' $(seq 1 $BOX_W))╝${NC}"; }
+box_mid()    { echo -e "${CYAN}╠$(printf '═%.0s' $(seq 1 $BOX_W))╣${NC}"; }
+box_blank()  { printf "${CYAN}║${NC}%-${BOX_W}s${CYAN}║${NC}\n" ""; }
+box_line()   { printf "${CYAN}║${NC} %-$(( BOX_W - 2 ))s ${CYAN}║${NC}\n" "$1"; }
+box_header() { printf "${CYAN}║${NC} ${BOLD}%-$(( BOX_W - 2 ))s${NC} ${CYAN}║${NC}\n" "$1"; }
+
 echo ""
-echo -e "${GREEN}${BOLD}  Installation Complete${NC}"
-echo -e "  ${CYAN}─────────────────────────────────────────────${NC}"
-echo ""
-echo -e "  ${BOLD}Installed Components${NC}"
-echo "    Scripts ........... ${INSTALL_DIR}/"
-echo "    Configuration ..... ${CONF_FILE}"
-echo "    Logs .............. ${LOG_DIR}/"
-echo "    Cron .............. ${CRON_FILE}"
-echo "    Backup storage .... ${BACKUP_DIR}"
-echo "    TDE certificate ... ${CERT_NAME:-auto-detect}"
-echo ""
-echo -e "  ${BOLD}Cron Schedule${NC}"
-echo "    CHECKDB ........... Wednesday $(printf '%02d' "$CHECKDB_HOUR"):00"
-echo "    FULL .............. Daily $(printf '%02d' "$FULL_BACKUP_HOUR"):00"
-echo "    LOG ............... Every ${LOG_FREQ_MINUTES} min"
-echo ""
-echo -e "  ${BOLD}Manual Commands${NC}"
-echo "    sudo ${INSTALL_DIR}/run_backup.sh FULL"
-echo "    sudo ${INSTALL_DIR}/run_backup.sh LOG"
-echo "    sudo ${INSTALL_DIR}/run_backup.sh CHECKDB"
-echo ""
-echo -e "  ${CYAN}─────────────────────────────────────────────${NC}"
+box_top
+box_line ""
+box_header "Installation Complete"
+box_line ""
+box_mid
+box_blank
+box_header "Installed Components"
+box_line "  Scripts ........... ${INSTALL_DIR}/"
+box_line "  Configuration ..... ${CONF_FILE}"
+box_line "  Logs .............. ${LOG_DIR}/"
+box_line "  Cron .............. ${CRON_FILE}"
+box_line "  Backup storage .... ${BACKUP_DIR}"
+box_line "  TDE certificate ... ${CERT_NAME:-auto-detect}"
+box_blank
+box_header "Cron Schedule"
+box_line "  CHECKDB ........... Wednesday $(printf '%02d' "$CHECKDB_HOUR"):00"
+box_line "  FULL .............. Daily $(printf '%02d' "$FULL_BACKUP_HOUR"):00"
+box_line "  LOG ............... Every ${LOG_FREQ_MINUTES} min"
+box_blank
+box_mid
+box_blank
+box_header "Manual Commands"
+box_line "  sudo ${INSTALL_DIR}/run_backup.sh FULL"
+box_line "  sudo ${INSTALL_DIR}/run_backup.sh LOG"
+box_line "  sudo ${INSTALL_DIR}/run_backup.sh CHECKDB"
+box_blank
+box_bottom
 echo ""
 
 echo -e "${YELLOW}${BOLD}── Mounting Backup Storage ──${NC}"
