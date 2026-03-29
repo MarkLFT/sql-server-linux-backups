@@ -15,7 +15,7 @@ Automated backup solution for SQL Server 2022 on Linux using [Ola Hallengren's M
 The fastest way to set up a single server. The installer handles everything interactively: installs Ola Hallengren, creates the backup login, configures Database Mail, deploys scripts, auto-detects your TDE certificate, and sets up cron jobs.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/semaborosmb/sqlbackups/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/MarkLFT/sql-server-linux-backups/master/install.sh -o install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
