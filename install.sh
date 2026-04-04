@@ -165,7 +165,8 @@ prompt BACKUP_PASS    "Backup SQL login password"       "" "secret"
 
 echo ""
 echo -e "  ${BOLD}Backup Storage${NC}"
-prompt BACKUP_DIR     "Backup directory"                "$BACKUP_MOUNT"
+prompt LOCAL_BACKUP_DIR  "Local backup directory"          "/sqlbackup"
+prompt REMOTE_BACKUP_DIR "Remote/network backup directory" "$BACKUP_MOUNT"
 
 echo ""
 echo -e "  ${BOLD}Backup Schedule${NC}"
@@ -215,20 +216,21 @@ for DIR in "$INSTALL_DIR" "$CONF_DIR" "$LOG_DIR"; do
     ok "Created $DIR"
 done
 
-if [[ -d "$BACKUP_DIR" ]]; then
-    ok "$BACKUP_DIR already exists"
-else
-    mkdir -p "$BACKUP_DIR"
-    ok "Created $BACKUP_DIR"
-fi
-
-# Set ownership - mssql user needs write access to backup dir
+# Local backup directory (where SQL Server writes backups)
+mkdir -p "$LOCAL_BACKUP_DIR"
 if id mssql &>/dev/null; then
-    chown -R mssql:mssql "$BACKUP_DIR"
-    chmod 0750 "$BACKUP_DIR"
-    ok "Set $BACKUP_DIR ownership to mssql:mssql (0750)"
+    chown -R mssql:mssql "$LOCAL_BACKUP_DIR"
+    chmod 0750 "$LOCAL_BACKUP_DIR"
+    ok "Set $LOCAL_BACKUP_DIR ownership to mssql:mssql (0750)"
 else
     warn "mssql user not found - set backup directory permissions manually"
+fi
+
+# Remote backup directory (network share for off-server copy)
+if [[ -d "$REMOTE_BACKUP_DIR" ]]; then
+    ok "$REMOTE_BACKUP_DIR already exists"
+else
+    warn "$REMOTE_BACKUP_DIR does not exist - ensure it is mounted before backups run"
 fi
 
 chmod 0700 "$CONF_DIR"
@@ -394,483 +396,19 @@ fi
 # =============================================================================
 banner "Step 6/7: Deploying Scripts"
 
-# --- Write SQL scripts inline (matching the project versions) -----------------
-
-# 03_backup_full.sql
-cat > "${INSTALL_DIR}/03_backup_full.sql" << 'EOSQL'
-USE [master];
-GO
-
-DECLARE @cert_name NVARCHAR(128);
-
-SET @cert_name = N'$(CERT_NAME)';
-
-IF @cert_name = N'' OR @cert_name = N'$(CERT_NAME)'
-BEGIN
-    SELECT TOP 1 @cert_name = c.name
-    FROM sys.dm_database_encryption_keys dek
-    JOIN sys.certificates c ON dek.encryptor_thumbprint = c.thumbprint
-    WHERE dek.database_id > 4;
-
-    IF @cert_name IS NULL
-    BEGIN
-        RAISERROR('No TDE certificate found. Cannot encrypt backups.', 16, 1);
-        RETURN;
-    END
-END
-
-PRINT 'Using TDE certificate: ' + @cert_name;
-
-EXEC dbo.DatabaseBackup
-    @Databases          = 'USER_DATABASES',
-    @Directory          = '/mnt/sqlbackups',
-    @BackupType         = 'FULL',
-    @Compress           = 'Y',
-    @MaxTransferSize    = 4194304,
-    @Encrypt            = 'Y',
-    @EncryptionAlgorithm = 'AES_256',
-    @ServerCertificate  = @cert_name,
-    @CleanupTime        = 168,
-    @CleanupMode        = 'AFTER_BACKUP',
-    @LogToTable         = 'Y',
-    @DirectoryStructure = '{DatabaseName}/{BackupType}',
-    @FileName           = '{DatabaseName}_FULL_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
-GO
-EOSQL
-
-# Patch backup directory if non-default
-if [[ "$BACKUP_DIR" != "/mnt/sqlbackups" ]]; then
-    sed -i "s|@Directory          = '/mnt/sqlbackups'|@Directory          = '${BACKUP_DIR}'|g" "${INSTALL_DIR}/03_backup_full.sql"
-fi
-
-# 04_backup_log.sql (only targets databases in FULL recovery model)
-cat > "${INSTALL_DIR}/04_backup_log.sql" << 'EOSQL'
-USE [master];
-GO
-
-DECLARE @db_list NVARCHAR(MAX) = N'';
-
-SELECT @db_list = @db_list + QUOTENAME(name) + N','
-FROM sys.databases
-WHERE database_id > 4
-  AND state = 0
-  AND recovery_model = 1;
-
-SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
-
-IF @db_list = N''
-BEGIN
-    PRINT 'No user databases in FULL recovery model - skipping log backup.';
-    RETURN;
-END
-
-PRINT 'Log backup targets: ' + @db_list;
-
-EXEC dbo.DatabaseBackup
-    @Databases          = @db_list,
-    @Directory          = '/mnt/sqlbackups',
-    @BackupType         = 'LOG',
-    @Compress           = 'Y',
-    @MaxTransferSize    = 4194304,
-    @CleanupTime        = 48,
-    @CleanupMode        = 'AFTER_BACKUP',
-    @LogToTable         = 'Y',
-    @DirectoryStructure = '{DatabaseName}/{BackupType}',
-    @FileName           = '{DatabaseName}_LOG_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
-GO
-EOSQL
-
-if [[ "$BACKUP_DIR" != "/mnt/sqlbackups" ]]; then
-    sed -i "s|@Directory          = '/mnt/sqlbackups'|@Directory          = '${BACKUP_DIR}'|g" "${INSTALL_DIR}/04_backup_log.sql"
-fi
-
-# 06_checkdb.sql
-cat > "${INSTALL_DIR}/06_checkdb.sql" << 'EOSQL'
-USE [master];
-GO
-
-EXEC dbo.DatabaseIntegrityCheck
-    @Databases = 'USER_DATABASES',
-    @LogToTable = 'Y';
-GO
-EOSQL
-
-# 05_verify_setup.sql
-cat > "${INSTALL_DIR}/05_verify_setup.sql" << 'EOSQL'
-USE [master];
-GO
-
-PRINT '==========================================================';
-PRINT '  SQL Server Backup Setup - Verification Report';
-PRINT '==========================================================';
-PRINT '';
-
-PRINT '--- Ola Hallengren Objects ---';
-
-IF OBJECT_ID('dbo.DatabaseBackup', 'P') IS NOT NULL
-    PRINT '[OK]   dbo.DatabaseBackup';
-ELSE
-    PRINT '[FAIL] dbo.DatabaseBackup - NOT FOUND';
-
-IF OBJECT_ID('dbo.DatabaseIntegrityCheck', 'P') IS NOT NULL
-    PRINT '[OK]   dbo.DatabaseIntegrityCheck';
-ELSE
-    PRINT '[FAIL] dbo.DatabaseIntegrityCheck - NOT FOUND';
-
-IF OBJECT_ID('dbo.CommandLog', 'U') IS NOT NULL
-    PRINT '[OK]   dbo.CommandLog table';
-ELSE
-    PRINT '[FAIL] dbo.CommandLog table - NOT FOUND';
-
-PRINT '';
-
-PRINT '--- Database Mail ---';
-
-DECLARE @mail_enabled INT;
-SELECT @mail_enabled = CAST(value_in_use AS INT)
-FROM sys.configurations
-WHERE name = 'Database Mail XPs';
-
-IF @mail_enabled = 1
-    PRINT '[OK]   Database Mail XPs enabled';
-ELSE
-    PRINT '[FAIL] Database Mail XPs not enabled';
-
-IF EXISTS (SELECT 1 FROM msdb.dbo.sysmail_profile WHERE name = 'BackupAlerts')
-    PRINT '[OK]   Mail profile "BackupAlerts" exists';
-ELSE
-    PRINT '[FAIL] Mail profile "BackupAlerts" - NOT FOUND';
-
-IF EXISTS (SELECT 1 FROM msdb.dbo.sysmail_account)
-    PRINT '[OK]   Mail account configured';
-ELSE
-    PRINT '[FAIL] No mail accounts configured';
-
-PRINT '';
-
-PRINT '--- User Databases ---';
-SELECT
-    LEFT(name, 30) AS [Database],
-    LEFT(recovery_model_desc, 8) AS [Recovery],
-    LEFT(state_desc, 8) AS [State]
-FROM sys.databases
-WHERE database_id > 4
-ORDER BY name;
-
-PRINT '';
-
-PRINT '--- TDE Certificate ---';
-IF EXISTS (
-    SELECT 1 FROM sys.dm_database_encryption_keys dek
-    JOIN sys.certificates c ON dek.encryptor_thumbprint = c.thumbprint
-    WHERE dek.database_id > 4
-)
-BEGIN
-    SELECT
-        LEFT(c.name, 20) AS [Certificate],
-        c.expiry_date AS [Expiry],
-        LEFT(d.name, 20) AS [Database]
-    FROM sys.dm_database_encryption_keys dek
-    JOIN sys.certificates c ON dek.encryptor_thumbprint = c.thumbprint
-    JOIN sys.databases d ON dek.database_id = d.database_id
-    WHERE dek.database_id > 4;
-END
-ELSE
-    PRINT '[WARN] No TDE certificates found - backup encryption will fail';
-
-PRINT '';
-
-PRINT '--- Recent CommandLog Entries (last 10) ---';
-IF OBJECT_ID('dbo.CommandLog', 'U') IS NOT NULL
-BEGIN
-    SELECT TOP 10
-        ID,
-        LEFT(DatabaseName, 20) AS [Database],
-        LEFT(CommandType, 15) AS [Type],
-        LEFT(CASE WHEN ErrorNumber = 0 THEN 'OK' ELSE 'FAIL: ' + ISNULL(ErrorMessage, '') END, 30) AS [Result],
-        StartTime,
-        EndTime
-    FROM dbo.CommandLog
-    ORDER BY ID DESC;
-END
-ELSE
-    PRINT 'CommandLog table not found.';
-
-PRINT '';
-
-PRINT '--- Recent Backup History (last 10) ---';
-SELECT TOP 10
-    LEFT(bs.database_name, 20) AS [Database],
-    CASE bs.type
-        WHEN 'D' THEN 'Full'
-        WHEN 'L' THEN 'Log'
-        WHEN 'I' THEN 'Diff'
-    END AS [Type],
-    bs.backup_finish_date AS [Completed],
-    CAST(bs.compressed_backup_size / 1048576.0 AS DECIMAL(10,2)) AS [Size (MB)],
-    LEFT(bmf.physical_device_name, 50) AS [File]
-FROM msdb.dbo.backupset bs
-JOIN msdb.dbo.backupmediafamily bmf ON bs.media_set_id = bmf.media_set_id
-ORDER BY bs.backup_finish_date DESC;
-
-PRINT '';
-PRINT '==========================================================';
-PRINT '  Verification complete';
-PRINT '==========================================================';
-GO
-EOSQL
-
-# run_backup.sh
-cat > "${INSTALL_DIR}/run_backup.sh" << 'EOSH'
-#!/bin/bash
-set -uo pipefail
-
-BACKUP_TYPE="${1:-}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONF_FILE="/etc/sqlbackup/backup.conf"
-LOG_DIR="/var/log/sqlbackup"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-
-if [[ "$BACKUP_TYPE" != "FULL" && "$BACKUP_TYPE" != "LOG" && "$BACKUP_TYPE" != "CHECKDB" ]]; then
-    echo "Usage: $0 FULL|LOG|CHECKDB"
-    exit 1
-fi
-
-if [[ ! -f "$CONF_FILE" ]]; then
-    echo "ERROR: Config file not found: $CONF_FILE"
-    exit 1
-fi
-
-source "$CONF_FILE"
-
-: "${SQL_USER:?SQL_USER not set in $CONF_FILE}"
-: "${SQL_PASSWORD:?SQL_PASSWORD not set in $CONF_FILE}"
-: "${SQL_HOST:=localhost}"
-: "${BACKUP_DIR:=/mnt/sqlbackups}"
-: "${MAIL_PROFILE:=BackupAlerts}"
-: "${MAIL_RECIPIENTS:=alerts@example.com}"
-: "${CERT_NAME:=}"
-
-mkdir -p "$LOG_DIR"
-LOG_FILE="${LOG_DIR}/backup_${BACKUP_TYPE}_${TIMESTAMP}.log"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-}
-
-SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-if [[ -z "$SERVER_IP" ]]; then
-    SERVER_IP="$(hostname)"
-fi
-SERVER_NAME="$(hostname -f 2>/dev/null || hostname)"
-
-send_failure_notification() {
-    log "Sending failure notification to $MAIL_RECIPIENTS"
-
-    local ERROR_DETAILS
-    ERROR_DETAILS=$(/opt/mssql-tools18/bin/sqlcmd \
-        -S "$SQL_HOST" \
-        -U "$SQL_USER" \
-        -P "$SQL_PASSWORD" \
-        -d master \
-        -C \
-        -h -1 \
-        -W \
-        -Q "SET NOCOUNT ON;
-            SELECT TOP 5
-                'Database: ' + ISNULL(DatabaseName, 'N/A')
-                + CHAR(13) + CHAR(10)
-                + 'Command: ' + LEFT(ISNULL(Command, 'N/A'), 200)
-                + CHAR(13) + CHAR(10)
-                + 'Error: ' + ISNULL(CAST(ErrorNumber AS VARCHAR) + ' - ' + ErrorMessage, 'N/A')
-                + CHAR(13) + CHAR(10)
-                + 'Start: ' + ISNULL(CONVERT(VARCHAR, StartTime, 120), 'N/A')
-                + CHAR(13) + CHAR(10)
-                + 'End: ' + ISNULL(CONVERT(VARCHAR, EndTime, 120), 'N/A')
-                + CHAR(13) + CHAR(10)
-                + '---'
-            FROM dbo.CommandLog
-            WHERE (CommandType LIKE 'BACKUP%' OR CommandType LIKE 'DBCC_CHECKDB%')
-              AND ErrorNumber <> 0
-            ORDER BY ID DESC;" 2>/dev/null) || true
-
-    if [[ -z "$ERROR_DETAILS" ]]; then
-        ERROR_DETAILS="No error details found in CommandLog. Check the log file: $LOG_FILE"
-    fi
-
-    # Escape single quotes for safe SQL string embedding
-    ERROR_DETAILS="${ERROR_DETAILS//\'/\'\'}"
-    local SAFE_OUTPUT
-    SAFE_OUTPUT="$(echo "$BACKUP_OUTPUT" | tail -50)"
-    SAFE_OUTPUT="${SAFE_OUTPUT//\'/\'\'}"
-
-    local EMAIL_SUBJECT="BACKUP FAILURE [$BACKUP_TYPE] on $SERVER_NAME ($SERVER_IP)"
-    local EMAIL_BODY
-    EMAIL_BODY="SQL Server Backup Failure Report
-==================================
-
-Server:      $SERVER_NAME
-Server IP:   $SERVER_IP
-Backup Type: $BACKUP_TYPE
-Time:        $(date '+%Y-%m-%d %H:%M:%S')
-Log File:    $LOG_FILE
-
-Error Details:
---------------
-$ERROR_DETAILS
-
-sqlcmd Output:
---------------
-$SAFE_OUTPUT"
-
-    /opt/mssql-tools18/bin/sqlcmd \
-        -S "$SQL_HOST" \
-        -U "$SQL_USER" \
-        -P "$SQL_PASSWORD" \
-        -d msdb \
-        -C \
-        -Q "EXEC sp_send_dbmail
-                @profile_name = '$MAIL_PROFILE',
-                @recipients   = '$MAIL_RECIPIENTS',
-                @subject      = N'$EMAIL_SUBJECT',
-                @body         = N'$EMAIL_BODY',
-                @body_format  = 'TEXT';" 2>&1 | tee -a "$LOG_FILE" || {
-        log "WARNING: Failed to send email notification via Database Mail"
-    }
-}
-
-check_minimum_backups() {
-    log "Checking minimum backup counts..."
-
-    local MIN_COUNT=2
-    local ALERT_DATABASES=""
-
-    for DB_DIR in "$BACKUP_DIR"/*/; do
-        [[ -d "$DB_DIR" ]] || continue
-        local DB_NAME
-        DB_NAME="$(basename "$DB_DIR")"
-
-        local BAK_COUNT
-        BAK_COUNT=$(find "$DB_DIR" -maxdepth 2 -name "*.bak" -type f 2>/dev/null | wc -l)
-
-        if [[ $BAK_COUNT -lt $MIN_COUNT ]]; then
-            log "WARNING: $DB_NAME has only $BAK_COUNT full backup(s) (minimum: $MIN_COUNT)"
-            ALERT_DATABASES="${ALERT_DATABASES}  - $DB_NAME: $BAK_COUNT backup(s)\n"
-        fi
-    done
-
-    if [[ -n "$ALERT_DATABASES" ]]; then
-        local EMAIL_SUBJECT="BACKUP WARNING: Low backup count on $SERVER_NAME ($SERVER_IP)"
-        local EMAIL_BODY
-        EMAIL_BODY="SQL Server Backup Warning
-=========================
-
-Server:    $SERVER_NAME
-Server IP: $SERVER_IP
-Time:      $(date '+%Y-%m-%d %H:%M:%S')
-
-The following databases have fewer than $MIN_COUNT full backups:
-$(echo -e "$ALERT_DATABASES")
-Please investigate. Backups may have been manually deleted or failing."
-
-        /opt/mssql-tools18/bin/sqlcmd \
-            -S "$SQL_HOST" \
-            -U "$SQL_USER" \
-            -P "$SQL_PASSWORD" \
-            -d msdb \
-            -C \
-            -Q "EXEC sp_send_dbmail
-                    @profile_name = '$MAIL_PROFILE',
-                    @recipients   = '$MAIL_RECIPIENTS',
-                    @subject      = N'$EMAIL_SUBJECT',
-                    @body         = N'$EMAIL_BODY',
-                    @body_format  = 'TEXT';" 2>&1 | tee -a "$LOG_FILE" || {
-            log "WARNING: Failed to send low-backup-count email"
-        }
+# --- Download scripts from GitHub ---------------------------------------------
+SCRIPTS_BASE_URL="https://raw.githubusercontent.com/MarkLFT/sql-server-linux-backups/master/scripts"
+
+for SCRIPT_NAME in run_backup.sh 03_backup_full.sql 04_backup_log.sql 05_verify_setup.sql 06_checkdb.sql; do
+    if curl -fsSL "${SCRIPTS_BASE_URL}/${SCRIPT_NAME}" -o "${INSTALL_DIR}/${SCRIPT_NAME}"; then
+        ok "Downloaded $SCRIPT_NAME"
     else
-        log "All databases have at least $MIN_COUNT full backups"
+        err "Failed to download $SCRIPT_NAME"
+        exit 1
     fi
-}
-
-log "=== Starting $BACKUP_TYPE backup ==="
-log "Server: $SERVER_NAME ($SERVER_IP)"
-
-case "$BACKUP_TYPE" in
-    FULL)    SQL_SCRIPT="${SCRIPT_DIR}/03_backup_full.sql" ;;
-    LOG)     SQL_SCRIPT="${SCRIPT_DIR}/04_backup_log.sql" ;;
-    CHECKDB) SQL_SCRIPT="${SCRIPT_DIR}/06_checkdb.sql" ;;
-esac
-
-if [[ ! -f "$SQL_SCRIPT" ]]; then
-    log "ERROR: SQL script not found: $SQL_SCRIPT"
-    exit 1
-fi
-
-# --- Ensure backup directories exist ------------------------------------------
-# Ola Hallengren's DirectoryStructure = '{DatabaseName}/{BackupType}' expects
-# subdirectories to already exist.  CIFS/SMB mounts do not allow SQL Server to
-# create them on the fly, so we pre-create them here.
-if [[ "$BACKUP_TYPE" == "FULL" || "$BACKUP_TYPE" == "LOG" ]]; then
-    DB_LIST=$(/opt/mssql-tools18/bin/sqlcmd \
-        -S "$SQL_HOST" \
-        -U "$SQL_USER" \
-        -P "$SQL_PASSWORD" \
-        -d master \
-        -h -1 \
-        -W \
-        -C \
-        -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0;" 2>/dev/null) || true
-
-    if [[ -n "$DB_LIST" ]]; then
-        while IFS= read -r DB_NAME; do
-            DB_NAME="$(echo "$DB_NAME" | xargs)"   # trim whitespace
-            [[ -z "$DB_NAME" ]] && continue
-            mkdir -p "${BACKUP_DIR}/${DB_NAME}/FULL" "${BACKUP_DIR}/${DB_NAME}/LOG"
-        done <<< "$DB_LIST"
-        log "Ensured backup directories exist for all user databases"
-    else
-        log "WARNING: Could not query database list - backup directories not pre-created"
-    fi
-fi
-
-BACKUP_EXIT=0
-BACKUP_OUTPUT=""
-
-log "Running: $SQL_SCRIPT"
-
-BACKUP_OUTPUT=$(/opt/mssql-tools18/bin/sqlcmd \
-    -S "$SQL_HOST" \
-    -U "$SQL_USER" \
-    -P "$SQL_PASSWORD" \
-    -d master \
-    -i "$SQL_SCRIPT" \
-    -v CERT_NAME="$CERT_NAME" \
-    -b \
-    -C 2>&1) || BACKUP_EXIT=$?
-
-echo "$BACKUP_OUTPUT" >> "$LOG_FILE"
-
-if [[ $BACKUP_EXIT -ne 0 ]]; then
-    log "BACKUP FAILED with exit code $BACKUP_EXIT"
-    send_failure_notification
-else
-    log "Backup completed successfully"
-
-    if [[ "$BACKUP_TYPE" == "FULL" ]]; then
-        check_minimum_backups
-    fi
-fi
-
-log "=== Backup $BACKUP_TYPE finished ==="
-exit $BACKUP_EXIT
-EOSH
+done
 
 chmod +x "${INSTALL_DIR}/run_backup.sh"
-ok "Deployed run_backup.sh"
-ok "Deployed 03_backup_full.sql"
-ok "Deployed 04_backup_log.sql"
-ok "Deployed 06_checkdb.sql"
-ok "Deployed 05_verify_setup.sql"
 
 # --- Write backup.conf -------------------------------------------------------
 cat > "$CONF_FILE" << EOCONF
@@ -881,7 +419,8 @@ SQL_USER="${BACKUP_USER}"
 SQL_PASSWORD="${BACKUP_PASS}"
 SQL_HOST="${SQL_HOST}"
 
-BACKUP_DIR="${BACKUP_DIR}"
+LOCAL_BACKUP_DIR="${LOCAL_BACKUP_DIR}"
+REMOTE_BACKUP_DIR="${REMOTE_BACKUP_DIR}"
 
 CERT_NAME="${CERT_NAME}"
 
@@ -962,7 +501,7 @@ if [[ -n "$INSTALL_DB_LIST" ]]; then
     while IFS= read -r _DB; do
         _DB="$(echo "$_DB" | xargs)"
         [[ -z "$_DB" ]] && continue
-        mkdir -p "${BACKUP_DIR}/${_DB}/FULL" "${BACKUP_DIR}/${_DB}/LOG"
+        mkdir -p "${LOCAL_BACKUP_DIR}/${_DB}/FULL" "${LOCAL_BACKUP_DIR}/${_DB}/LOG"
     done <<< "$INSTALL_DB_LIST"
     ok "Created FULL and LOG directories for all user databases"
 else
@@ -1018,7 +557,8 @@ box_line "  Scripts ........... ${INSTALL_DIR}/"
 box_line "  Configuration ..... ${CONF_FILE}"
 box_line "  Logs .............. ${LOG_DIR}/"
 box_line "  Cron .............. ${CRON_FILE}"
-box_line "  Backup storage .... ${BACKUP_DIR}"
+box_line "  Local backups ..... ${LOCAL_BACKUP_DIR}"
+box_line "  Remote sync ....... ${REMOTE_BACKUP_DIR}"
 box_line "  TDE certificate ... ${CERT_NAME:-auto-detect}"
 box_blank
 box_header "Cron Schedule"
@@ -1036,26 +576,25 @@ box_blank
 box_bottom
 echo ""
 
-echo -e "${YELLOW}${BOLD}── Mounting Backup Storage ──${NC}"
+echo -e "${YELLOW}${BOLD}── Remote Backup Storage ──${NC}"
 echo ""
-echo -e "Backups are written to ${BOLD}${BACKUP_DIR}${NC}."
-echo "This should be a network share for off-server redundancy."
+echo -e "Backups are written to local disk (${BOLD}${LOCAL_BACKUP_DIR}${NC}) then synced"
+echo -e "to the remote share (${BOLD}${REMOTE_BACKUP_DIR}${NC}) via rsync."
 echo ""
 echo -e "${BOLD}SMB/CIFS Mount:${NC}"
 echo "  1. Install:     apt install cifs-utils  (or)  yum install cifs-utils"
 echo "  2. Credentials: echo -e 'username=<smb_user>\npassword=<smb_pass>\ndomain=<domain>' > /etc/smbcredentials"
 echo "                  chmod 600 /etc/smbcredentials"
-echo "  3. fstab:       //<server>/<share>  ${BACKUP_DIR}  cifs  credentials=/etc/smbcredentials,uid=mssql,gid=mssql,file_mode=0750,dir_mode=0750,nofail  0  0"
-echo "  4. Mount:       mount ${BACKUP_DIR}"
+echo "  3. fstab:       //<server>/<share>  ${REMOTE_BACKUP_DIR}  cifs  credentials=/etc/smbcredentials,uid=mssql,gid=mssql,file_mode=0770,dir_mode=0770,hard,nofail  0  0"
+echo "  4. Mount:       mount ${REMOTE_BACKUP_DIR}"
 echo ""
 echo -e "${BOLD}NFS Mount:${NC}"
 echo "  1. Install:     apt install nfs-common  (or)  yum install nfs-utils"
-echo "  2. fstab:       <server>:/<export>  ${BACKUP_DIR}  nfs  defaults,nofail  0  0"
-echo "  3. Mount:       mount ${BACKUP_DIR}"
+echo "  2. fstab:       <server>:/<export>  ${REMOTE_BACKUP_DIR}  nfs  defaults,nofail  0  0"
+echo "  3. Mount:       mount ${REMOTE_BACKUP_DIR}"
 echo "  4. Ensure the NFS export allows write access from the mssql uid/gid"
 echo ""
 echo -e "${YELLOW}Important:${NC} Mount the share ${BOLD}before${NC} the first scheduled backup."
-echo "Verify write access:  sudo -u mssql touch ${BACKUP_DIR}/test && rm ${BACKUP_DIR}/test && echo OK"
 echo ""
 
 echo -e "This script is safe to re-run. It will update existing components without"

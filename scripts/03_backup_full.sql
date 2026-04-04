@@ -33,7 +33,7 @@ PRINT 'Using TDE certificate: ' + @cert_name;
 
 EXEC dbo.DatabaseBackup
     @Databases          = 'USER_DATABASES',
-    @Directory          = '/mnt/sqlbackups',
+    @Directory          = '$(BACKUP_DIR)',
     @BackupType         = 'FULL',
     @Compress           = 'Y',
     @MaxTransferSize    = 4194304,

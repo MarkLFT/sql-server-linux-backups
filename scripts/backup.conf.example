@@ -11,7 +11,8 @@ SQL_PASSWORD="<change_me>"
 SQL_HOST="localhost"
 
 # Backup storage
-BACKUP_DIR="/mnt/sqlbackups"
+LOCAL_BACKUP_DIR="/sqlbackup"
+REMOTE_BACKUP_DIR="/mnt/sqlbackups"
 
 # TDE certificate name (leave empty to auto-detect)
 CERT_NAME=""

@@ -22,7 +22,7 @@ END
 
 EXEC dbo.DatabaseBackup
     @Databases           = 'USER_DATABASES',
-    @Directory           = '{{ backup_dir }}',
+    @Directory           = '$(BACKUP_DIR)',
     @BackupType          = 'FULL',
     @Compress            = 'Y',
     @MaxTransferSize     = 4194304,

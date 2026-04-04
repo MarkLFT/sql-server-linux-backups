@@ -36,10 +36,16 @@ source "$CONF_FILE"
 : "${SQL_USER:?SQL_USER not set in $CONF_FILE}"
 : "${SQL_PASSWORD:?SQL_PASSWORD not set in $CONF_FILE}"
 : "${SQL_HOST:=localhost}"
-: "${BACKUP_DIR:=/mnt/sqlbackups}"
+: "${LOCAL_BACKUP_DIR:=/sqlbackup}"
+: "${REMOTE_BACKUP_DIR:=/mnt/sqlbackups}"
 : "${MAIL_PROFILE:=BackupAlerts}"
 : "${MAIL_RECIPIENTS:=alerts@example.com}"
 : "${CERT_NAME:=}"
+
+# Backwards compatibility: if old BACKUP_DIR is set, treat it as REMOTE_BACKUP_DIR
+if [[ -n "${BACKUP_DIR:-}" ]]; then
+    REMOTE_BACKUP_DIR="$BACKUP_DIR"
+fi
 
 # --- Setup logging ------------------------------------------------------------
 mkdir -p "$LOG_DIR"
@@ -145,7 +151,7 @@ check_minimum_backups() {
     local MIN_COUNT=2
     local ALERT_DATABASES=""
 
-    for DB_DIR in "$BACKUP_DIR"/*/; do
+    for DB_DIR in "$LOCAL_BACKUP_DIR"/*/; do
         [[ -d "$DB_DIR" ]] || continue
         local DB_NAME
         DB_NAME="$(basename "$DB_DIR")"
@@ -193,6 +199,21 @@ Please investigate. Backups may have been manually deleted or failing."
     fi
 }
 
+# --- Sync local backups to remote share ---------------------------------------
+sync_to_remote() {
+    if [[ ! -d "$REMOTE_BACKUP_DIR" ]]; then
+        log "WARNING: Remote backup directory $REMOTE_BACKUP_DIR not available - skipping sync"
+        return 1
+    fi
+
+    log "Syncing backups to $REMOTE_BACKUP_DIR..."
+    if rsync -a --delete "$LOCAL_BACKUP_DIR/" "$REMOTE_BACKUP_DIR/" 2>&1 | tee -a "$LOG_FILE"; then
+        log "Sync to $REMOTE_BACKUP_DIR completed"
+    else
+        log "WARNING: Sync to $REMOTE_BACKUP_DIR failed (backup files are safe on local disk)"
+    fi
+}
+
 # ==============================================================================
 # Main
 # ==============================================================================
@@ -212,10 +233,7 @@ if [[ ! -f "$SQL_SCRIPT" ]]; then
     exit 1
 fi
 
-# --- Ensure backup directories exist ------------------------------------------
-# Ola Hallengren's DirectoryStructure = '{DatabaseName}/{BackupType}' expects
-# subdirectories to already exist.  CIFS/SMB mounts do not allow SQL Server to
-# create them on the fly, so we pre-create them here.
+# --- Ensure local backup directories exist ------------------------------------
 if [[ "$BACKUP_TYPE" == "FULL" || "$BACKUP_TYPE" == "LOG" ]]; then
     DB_LIST=$(/opt/mssql-tools18/bin/sqlcmd \
         -S "$SQL_HOST" \
@@ -231,9 +249,10 @@ if [[ "$BACKUP_TYPE" == "FULL" || "$BACKUP_TYPE" == "LOG" ]]; then
         while IFS= read -r DB_NAME; do
             DB_NAME="$(echo "$DB_NAME" | xargs)"   # trim whitespace
             [[ -z "$DB_NAME" ]] && continue
-            mkdir -p "${BACKUP_DIR}/${DB_NAME}/FULL" "${BACKUP_DIR}/${DB_NAME}/LOG"
+            mkdir -p "${LOCAL_BACKUP_DIR}/${DB_NAME}/FULL" "${LOCAL_BACKUP_DIR}/${DB_NAME}/LOG"
+            chown -R mssql:mssql "${LOCAL_BACKUP_DIR}/${DB_NAME}"
         done <<< "$DB_LIST"
-        log "Ensured backup directories exist for all user databases"
+        log "Ensured backup directories exist under $LOCAL_BACKUP_DIR"
     else
         log "WARNING: Could not query database list - backup directories not pre-created"
     fi
@@ -251,7 +270,7 @@ BACKUP_OUTPUT=$(/opt/mssql-tools18/bin/sqlcmd \
     -P "$SQL_PASSWORD" \
     -d master \
     -i "$SQL_SCRIPT" \
-    -v CERT_NAME="$CERT_NAME" \
+    -v CERT_NAME="$CERT_NAME" BACKUP_DIR="$LOCAL_BACKUP_DIR" \
     -b \
     -C 2>&1) || BACKUP_EXIT=$?
 
@@ -263,6 +282,9 @@ if [[ $BACKUP_EXIT -ne 0 ]]; then
     send_failure_notification
 else
     log "Backup completed successfully"
+
+    # Sync to remote/network share
+    sync_to_remote
 
     # Safety check: ensure at least 2 full backups exist per database
     if [[ "$BACKUP_TYPE" == "FULL" ]]; then

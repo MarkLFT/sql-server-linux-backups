@@ -32,7 +32,7 @@ PRINT 'Log backup targets: ' + @db_list;
 
 EXEC dbo.DatabaseBackup
     @Databases          = @db_list,
-    @Directory          = '/mnt/sqlbackups',
+    @Directory          = '$(BACKUP_DIR)',
     @BackupType         = 'LOG',
     @Compress           = 'Y',
     @MaxTransferSize    = 4194304,

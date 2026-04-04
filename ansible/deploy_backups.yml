@@ -30,9 +30,9 @@
 
   tasks:
     # --- Directory Setup ------------------------------------------------------
-    - name: Create backup directory
+    - name: Create local backup directory
       ansible.builtin.file:
-        path: "{{ backup_dir }}"
+        path: "{{ local_backup_dir }}"
         state: directory
         owner: mssql
         group: mssql
@@ -126,7 +126,7 @@
 
     - name: Create per-database FULL and LOG backup directories
       ansible.builtin.file:
-        path: "{{ backup_dir }}/{{ item.0 }}/{{ item.1 }}"
+        path: "{{ local_backup_dir }}/{{ item.0 }}/{{ item.1 }}"
         state: directory
         owner: mssql
         group: mssql
