@@ -108,6 +108,38 @@
       changed_when: true
       no_log: true
 
+    # --- Pre-create per-database backup directories -------------------------
+    # Ola Hallengren expects {DatabaseName}/{BackupType} subdirectories.
+    # CIFS/SMB mounts do not allow SQL Server to create them on the fly.
+    - name: Query user databases for directory creation
+      ansible.builtin.command:
+        cmd: >
+          {{ sqlcmd_path }}
+          -S {{ sql_host }}
+          -U {{ sql_user }}
+          -P '{{ sql_password }}'
+          -d master -h -1 -W -C
+          -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0;"
+      register: db_list_result
+      changed_when: false
+      no_log: true
+
+    - name: Create per-database FULL and LOG backup directories
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/{{ item.0 }}/{{ item.1 }}"
+        state: directory
+        owner: mssql
+        group: mssql
+        mode: "0770"
+      loop: >-
+        {{ db_list_result.stdout_lines
+           | map('trim')
+           | select
+           | product(['FULL', 'LOG'])
+           | list }}
+      loop_control:
+        label: "{{ item.0 }}/{{ item.1 }}"
+
     # --- Deploy Backup Scripts ------------------------------------------------
     - name: Template full backup SQL script
       ansible.builtin.template:

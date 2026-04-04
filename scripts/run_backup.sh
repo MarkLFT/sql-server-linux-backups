@@ -212,6 +212,33 @@ if [[ ! -f "$SQL_SCRIPT" ]]; then
     exit 1
 fi
 
+# --- Ensure backup directories exist ------------------------------------------
+# Ola Hallengren's DirectoryStructure = '{DatabaseName}/{BackupType}' expects
+# subdirectories to already exist.  CIFS/SMB mounts do not allow SQL Server to
+# create them on the fly, so we pre-create them here.
+if [[ "$BACKUP_TYPE" == "FULL" || "$BACKUP_TYPE" == "LOG" ]]; then
+    DB_LIST=$(/opt/mssql-tools18/bin/sqlcmd \
+        -S "$SQL_HOST" \
+        -U "$SQL_USER" \
+        -P "$SQL_PASSWORD" \
+        -d master \
+        -h -1 \
+        -W \
+        -C \
+        -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0;" 2>/dev/null) || true
+
+    if [[ -n "$DB_LIST" ]]; then
+        while IFS= read -r DB_NAME; do
+            DB_NAME="$(echo "$DB_NAME" | xargs)"   # trim whitespace
+            [[ -z "$DB_NAME" ]] && continue
+            mkdir -p "${BACKUP_DIR}/${DB_NAME}/FULL" "${BACKUP_DIR}/${DB_NAME}/LOG"
+        done <<< "$DB_LIST"
+        log "Ensured backup directories exist for all user databases"
+    else
+        log "WARNING: Could not query database list - backup directories not pre-created"
+    fi
+fi
+
 # --- Run backup ---------------------------------------------------------------
 BACKUP_EXIT=0
 BACKUP_OUTPUT=""
