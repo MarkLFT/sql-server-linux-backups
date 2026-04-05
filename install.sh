@@ -142,6 +142,19 @@ else
     exit 1
 fi
 
+# rsync (used to sync local backups to remote/network share)
+if command -v rsync &>/dev/null; then
+    ok "rsync available"
+else
+    info "rsync not found - installing..."
+    if apt-get install -y rsync &>/dev/null 2>&1 || yum install -y rsync &>/dev/null 2>&1; then
+        ok "rsync installed"
+    else
+        err "Failed to install rsync. Install it manually: apt install rsync"
+        exit 1
+    fi
+fi
+
 # Check SQL Server is running
 if "$SQLCMD" -S localhost -Q "SELECT 1" -C -b &>/dev/null 2>&1; then
     ok "SQL Server is reachable on localhost"
