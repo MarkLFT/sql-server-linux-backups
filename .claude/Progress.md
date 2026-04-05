@@ -4,9 +4,16 @@
 
 ## Current State
 
-The project is stable and functional. All core features are implemented.
+The project is stable and functional. First real backup run completed successfully on db.rmserver.local.
 
 ## Completed Work
+
+### Session: 2026-04-05 (second session)
+- **Fixed CERT_NAME sqlcmd bug** — empty `CERT_NAME` in config caused `sqlcmd -v CERT_NAME=""` to reject the argument. Fixed by using `AUTO` as sentinel value; SQL script auto-detects TDE or skips encryption.
+- **Made TDE encryption optional** — `03_backup_full.sql` no longer errors when no TDE certificate exists; backs up without encryption instead.
+- **Added rsync to installer prerequisites** — `install.sh` now checks for rsync and installs it if missing.
+- **Migrated all 12 user databases** from old server (192.168.100.79) to new server (192.168.100.77) — transferred data/log files via rsync, attached all databases, created GRManager login (db_owner on all user DBs).
+- FULL and LOG backups confirmed working with all databases on new server.
 
 ### Session: 2026-04-05
 - Analysed full project structure and codebase
@@ -25,15 +32,15 @@ The project is stable and functional. All core features are implemented.
 - None currently identified
 
 ## What's Working
-- Full backup with TDE encryption and compression
+- Full backup with optional TDE encryption (auto-detect or skip)
 - Transaction log backups (FULL recovery model only)
 - DBCC CHECKDB integrity checks
 - Database Mail failure notifications
 - Local disk backup + rsync to network share
-- Interactive installer (downloads scripts from GitHub)
+- Interactive installer (downloads scripts from GitHub, installs rsync)
 - Ansible multi-server deployment
 - Cron scheduling with configurable times
-- Per-database directory pre-creation
 
 ## Next Steps / Ideas
+- Investigate database list query warning
 - (Awaiting user direction)
