@@ -10,6 +10,7 @@ USE [master];
 GO
 
 DECLARE @cert_name NVARCHAR(128);
+DECLARE @use_encryption CHAR(1) = 'Y';
 
 -- Auto-detect the TDE certificate if not provided via sqlcmd variable
 SET @cert_name = N'$(CERT_NAME)';
@@ -24,25 +25,42 @@ BEGIN
 
     IF @cert_name IS NULL
     BEGIN
-        RAISERROR('No TDE certificate found. Cannot encrypt backups.', 16, 1);
-        RETURN;
+        PRINT 'No TDE certificate found - backups will not be encrypted';
+        SET @use_encryption = 'N';
     END
 END
 
-PRINT 'Using TDE certificate: ' + @cert_name;
+IF @use_encryption = 'Y'
+BEGIN
+    PRINT 'Using TDE certificate: ' + @cert_name;
 
-EXEC dbo.DatabaseBackup
-    @Databases          = 'USER_DATABASES',
-    @Directory          = '$(BACKUP_DIR)',
-    @BackupType         = 'FULL',
-    @Compress           = 'Y',
-    @MaxTransferSize    = 4194304,
-    @Encrypt            = 'Y',
-    @EncryptionAlgorithm = 'AES_256',
-    @ServerCertificate  = @cert_name,
-    @CleanupTime        = 168,
-    @CleanupMode        = 'AFTER_BACKUP',
-    @LogToTable         = 'Y',
-    @DirectoryStructure = '{DatabaseName}/{BackupType}',
-    @FileName           = '{DatabaseName}_FULL_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
+    EXEC dbo.DatabaseBackup
+        @Databases          = 'USER_DATABASES',
+        @Directory          = '$(BACKUP_DIR)',
+        @BackupType         = 'FULL',
+        @Compress           = 'Y',
+        @MaxTransferSize    = 4194304,
+        @Encrypt            = 'Y',
+        @EncryptionAlgorithm = 'AES_256',
+        @ServerCertificate  = @cert_name,
+        @CleanupTime        = 168,
+        @CleanupMode        = 'AFTER_BACKUP',
+        @LogToTable         = 'Y',
+        @DirectoryStructure = '{DatabaseName}/{BackupType}',
+        @FileName           = '{DatabaseName}_FULL_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
+END
+ELSE
+BEGIN
+    EXEC dbo.DatabaseBackup
+        @Databases          = 'USER_DATABASES',
+        @Directory          = '$(BACKUP_DIR)',
+        @BackupType         = 'FULL',
+        @Compress           = 'Y',
+        @MaxTransferSize    = 4194304,
+        @CleanupTime        = 168,
+        @CleanupMode        = 'AFTER_BACKUP',
+        @LogToTable         = 'Y',
+        @DirectoryStructure = '{DatabaseName}/{BackupType}',
+        @FileName           = '{DatabaseName}_FULL_{Year}{Month}{Day}_{Hour}{Minute}{Second}.{FileExtension}';
+END
 GO

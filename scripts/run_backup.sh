@@ -264,13 +264,19 @@ BACKUP_OUTPUT=""
 
 log "Running: $SQL_SCRIPT"
 
+# Build sqlcmd variable arguments (sqlcmd rejects empty -v values)
+SQLCMD_VARS=(-v BACKUP_DIR="$LOCAL_BACKUP_DIR")
+if [[ -n "$CERT_NAME" ]]; then
+    SQLCMD_VARS+=(-v CERT_NAME="$CERT_NAME")
+fi
+
 BACKUP_OUTPUT=$(/opt/mssql-tools18/bin/sqlcmd \
     -S "$SQL_HOST" \
     -U "$SQL_USER" \
     -P "$SQL_PASSWORD" \
     -d master \
     -i "$SQL_SCRIPT" \
-    -v CERT_NAME="$CERT_NAME" BACKUP_DIR="$LOCAL_BACKUP_DIR" \
+    "${SQLCMD_VARS[@]}" \
     -b \
     -C 2>&1) || BACKUP_EXIT=$?
 

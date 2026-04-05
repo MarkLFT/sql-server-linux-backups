@@ -5,7 +5,9 @@
       "Bash(git config:*)",
       "Bash(wc -l install.sh scripts/*.sh scripts/*.sql)",
       "Bash(xargs wc:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   },
   "hooks": {
