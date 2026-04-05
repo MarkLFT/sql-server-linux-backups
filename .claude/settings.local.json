@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__azure-repo__list_directory_with_sizes",
+      "Bash(git config:*)",
+      "Bash(wc -l install.sh scripts/*.sh scripts/*.sql)",
+      "Bash(xargs wc:*)",
+      "Bash(git add:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR\"/.claude/Onboarding.md"
+          }
+        ]
+      }
+    ]
+  }
+}
