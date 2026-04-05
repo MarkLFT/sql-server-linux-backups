@@ -10,24 +10,29 @@ USE [master];
 GO
 
 DECLARE @cert_name NVARCHAR(128);
-DECLARE @use_encryption CHAR(1) = 'Y';
+DECLARE @use_encryption CHAR(1) = 'N';
 
--- Auto-detect the TDE certificate if not provided via sqlcmd variable
+-- CERT_NAME is always passed from run_backup.sh (set to AUTO when not configured)
 SET @cert_name = N'$(CERT_NAME)';
 
-IF @cert_name = N'' OR @cert_name = N'$(CERT_NAME)'
+IF @cert_name <> N'AUTO'
 BEGIN
-    -- Find the certificate used for TDE on any database
+    -- Explicit certificate name provided
+    SET @use_encryption = 'Y';
+END
+ELSE
+BEGIN
+    -- Auto-detect the TDE certificate
+    SET @cert_name = NULL;
     SELECT TOP 1 @cert_name = c.name
     FROM sys.dm_database_encryption_keys dek
     JOIN sys.certificates c ON dek.encryptor_thumbprint = c.thumbprint
     WHERE dek.database_id > 4;
 
-    IF @cert_name IS NULL
-    BEGIN
+    IF @cert_name IS NOT NULL
+        SET @use_encryption = 'Y';
+    ELSE
         PRINT 'No TDE certificate found - backups will not be encrypted';
-        SET @use_encryption = 'N';
-    END
 END
 
 IF @use_encryption = 'Y'
