@@ -13,7 +13,7 @@ LOG_DIR="/var/log/sqlbackup"
 CRON_FILE="/etc/cron.d/sqlbackup"
 
 # Verify scripts exist
-for SCRIPT in run_backup.sh 03_backup_full.sql 04_backup_log.sql 06_checkdb.sql; do
+for SCRIPT in run_backup.sh 03_backup_full.sql 04_backup_log.sql 06_checkdb.sql 07_index_optimize.sql 08_backup_system.sql; do
     if [[ ! -f "${SCRIPT_DIR}/${SCRIPT}" ]]; then
         echo "ERROR: ${SCRIPT_DIR}/${SCRIPT} not found."
         echo "Copy scripts to ${SCRIPT_DIR}/ first."
@@ -37,8 +37,14 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Full backup - Daily at 05:00
 0 5 * * * root /opt/sqlbackup/run_backup.sh FULL >> /var/log/sqlbackup/cron_full.log 2>&1
 
+# System database backup - Daily at 05:30
+30 5 * * * root /opt/sqlbackup/run_backup.sh SYSTEM >> /var/log/sqlbackup/cron_system.log 2>&1
+
 # Transaction log backup - Every hour (skips 05:00 to avoid overlap with full)
 0 0-4,6-23 * * * root /opt/sqlbackup/run_backup.sh LOG >> /var/log/sqlbackup/cron_log.log 2>&1
+
+# Index optimize + statistics update - Monday at 01:00
+0 1 * * 1 root /opt/sqlbackup/run_backup.sh INDEXOPT >> /var/log/sqlbackup/cron_indexopt.log 2>&1
 EOF
 
 chmod 644 "$CRON_FILE"
@@ -46,8 +52,10 @@ chmod 644 "$CRON_FILE"
 echo "[OK] Cron jobs installed to $CRON_FILE"
 echo ""
 echo "Schedule:"
+echo "  INDEXOPT: Monday 01:00"
 echo "  CHECKDB:  Wednesday 03:00"
 echo "  FULL:     Daily 05:00"
+echo "  SYSTEM:   Daily 05:30"
 echo "  LOG:      Hourly (except 05:00)"
 echo ""
 echo "Logs: $LOG_DIR/"

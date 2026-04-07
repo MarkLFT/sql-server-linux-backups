@@ -18,8 +18,8 @@ LOG_DIR="/var/log/sqlbackup"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # --- Validate arguments ------------------------------------------------------
-if [[ "$BACKUP_TYPE" != "FULL" && "$BACKUP_TYPE" != "LOG" && "$BACKUP_TYPE" != "CHECKDB" ]]; then
-    echo "Usage: $0 FULL|LOG|CHECKDB"
+if [[ "$BACKUP_TYPE" != "FULL" && "$BACKUP_TYPE" != "LOG" && "$BACKUP_TYPE" != "CHECKDB" && "$BACKUP_TYPE" != "INDEXOPT" && "$BACKUP_TYPE" != "SYSTEM" ]]; then
+    echo "Usage: $0 FULL|LOG|CHECKDB|INDEXOPT|SYSTEM"
     exit 1
 fi
 
@@ -223,9 +223,11 @@ log "Server: $SERVER_NAME ($SERVER_IP)"
 
 # --- Select SQL script --------------------------------------------------------
 case "$BACKUP_TYPE" in
-    FULL)    SQL_SCRIPT="${SCRIPT_DIR}/03_backup_full.sql" ;;
-    LOG)     SQL_SCRIPT="${SCRIPT_DIR}/04_backup_log.sql" ;;
-    CHECKDB) SQL_SCRIPT="${SCRIPT_DIR}/06_checkdb.sql" ;;
+    FULL)     SQL_SCRIPT="${SCRIPT_DIR}/03_backup_full.sql" ;;
+    LOG)      SQL_SCRIPT="${SCRIPT_DIR}/04_backup_log.sql" ;;
+    CHECKDB)  SQL_SCRIPT="${SCRIPT_DIR}/06_checkdb.sql" ;;
+    INDEXOPT) SQL_SCRIPT="${SCRIPT_DIR}/07_index_optimize.sql" ;;
+    SYSTEM)   SQL_SCRIPT="${SCRIPT_DIR}/08_backup_system.sql" ;;
 esac
 
 if [[ ! -f "$SQL_SCRIPT" ]]; then
@@ -234,7 +236,13 @@ if [[ ! -f "$SQL_SCRIPT" ]]; then
 fi
 
 # --- Ensure local backup directories exist ------------------------------------
-if [[ "$BACKUP_TYPE" == "FULL" || "$BACKUP_TYPE" == "LOG" ]]; then
+if [[ "$BACKUP_TYPE" == "FULL" || "$BACKUP_TYPE" == "LOG" || "$BACKUP_TYPE" == "SYSTEM" ]]; then
+    if [[ "$BACKUP_TYPE" == "SYSTEM" ]]; then
+        DB_QUERY="SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id <= 4 AND state = 0;"
+    else
+        DB_QUERY="SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0;"
+    fi
+
     DB_LIST=$(/opt/mssql-tools18/bin/sqlcmd \
         -S "$SQL_HOST" \
         -U "$SQL_USER" \
@@ -243,7 +251,7 @@ if [[ "$BACKUP_TYPE" == "FULL" || "$BACKUP_TYPE" == "LOG" ]]; then
         -h -1 \
         -W \
         -C \
-        -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0;" 2>/dev/null) || true
+        -Q "$DB_QUERY" 2>/dev/null) || true
 
     if [[ -n "$DB_LIST" ]]; then
         while IFS= read -r DB_NAME; do
